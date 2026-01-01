@@ -1,0 +1,470 @@
+
+BikeBus
+
+
+ProjektnummerE-13-0090ProjektnameE-BikeAuftraggeberPrüfstand/OrtZeitraumBerichtsnummerVersionErstelldatum31.12.2025Seiten14DokumentnameBikeBus-v1.8.docxBearbeiterentferntMailentferntTelefonentferntFreigabeNameDatumExtern
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1 Inhaltsverzeichnis
+1	Inhaltsverzeichnis	2
+1.1	History	3
+2	BikeBus HW-Interface	4
+3	BikeBus Protokoll	5
+3.1	Telegramm-Aufbau	5
+4	BikeBus Telegramme	6
+4.1	GOD Display (slave mode) (Addr. 2)	6
+4.1.1	GOD Display Fehler	6
+4.2	Motor (Addr. 16)	7
+4.2.1	Telegramme	7
+4.2.2	Main Motor Control	8
+4.2.3	Umschaltesequenz Schiebehilfe	8
+4.2.4	Schiebehilfe Rückwärts	9
+4.2.5	Motor Error Bits	9
+4.3	Batterie (Addr. 32/33)	9
+4.3.1	Telegramme	9
+4.3.2	Batterie Status bits	10
+4.3.3	Herstellungsdatum Batterie	11
+4.4	Licht(Addr. 48/49)	11
+4.4.1	Telegramme	11
+4.4.2	Steckerbelegung Supernova	11
+5	Telegramm Sequenzen	12
+6	Events	14
+
+
+
+
+1.1 History
+VersionDatumVerfasserBemerkung1.020.09.13L.Langenbach1.103.10.13L.LangenbachFehlerstatus ergänzt. 1.218.10.13L.LangenbachFehlerbits, Unterstützungsstufen ergänzt,
+Telegrammsequenzen ergänzt1.305.12.13L.LangenbachTelegrammsequenzen überarbeitet1.422.01.14L.LangenbachKorrektur Schiebehilfe, Events1.524.01.14L.LangenbachSequenzen Schiebehilfe1.603.04.14L.LangenbachLicht / Strombegrenzung1.719.05.14L.LangenbachSchiebehilfe Rückwärts / Licht 
+
+
+2 BikeBus HW-Interface
+
+Abbildung 1
+Die Abbildung 1 zeigt die Schaltung zur Wandlung von UART zu BikeBus. Die Schaltung wandelt den Pegel von der BikeBus-Seite auf 3,3V Pegel auf der Mikrocontrollerseite. Weiterhin werden die Signal von TX und für RX auf eine einzelne Datenleitung vom BikeBus übertragen.  Der Master versorgt den BikeBus über den einzigen PullUp-Widerstand im Bus. Die anderen Busteilnehmer dürfen nur durch einen Widerstand den Pegel auf dem Bus verringern, siehe T4 und R1 in Abbildung 1. Kurzschlüsse vom BikeBus zu einer der beiden Batterieleitungen können anhand der unterschiedlichen Spannungen detektiert werden.
+
+3 BikeBus Protokoll
+Eine Übertragung darf nur vom Master initiiert werden. Master sendet jede 20ms, wenn der Client antwortet. Ohne Antwort auf das vorherige Telegramm wird erst nach 30ms wiederholt gesendet. Clients antworten 10ms nach Beginn des Mastertelegramms, wenn die Adresse im Telegramm übereinstimmt. 
+
+Der Motor geht, wenn 100ms kein „MainMotorControl“-Telegramm empfangen wurde, in den sicheren Zustand, d.h. er schaltet die Unterstützung ab.
+
+Busadressen
+1 	Operator Panel
+2	Operator Panel (Slave Mode)
+16	Motor
+24	Bremse
+32	Batterie 
+33	Opt. Zweite Batterie
+48	Licht
+240	Bus Logger/ Parametertool
+
+Das Display ist Master mit Adresse 1. Zyklisch wird nach dem Servicetool gesucht. Bekommt das GOD-Display eine Antwort vom Servicetool, geht es in den Slave-Modus und hat die Adresse 2.
+
+3.1 Telegramm-Aufbau
+Ein Telegramm besteht aus 5 Bytes und ist wie folgt aufgebaut:
+
+Slaveaddress	Token	Variable (lowbyte)	Variable (highbyte)	Checksum
+
+Die Checksumme ist die arithmetische Summe der vorherigen 4 Bytes.
+
+Typische Antwort:
+Masteradresse (0x01)	Token aus Anfrage	Variable (lowbyte)	Variable (highbyte)	Checksum
+
+Antwort bei unbekannten Token:
+Masteraddress (0x01)	0x00	SlaveAddress	Request Token
+	Checksum
+
+4 BikeBus Telegramme
+Die Token in den folgenden Tabellen sind jeweils dezimal angegeben. Bei hex Darstellung sind die Werte mit 0x gekennzeichnet.
+4.1 GOD Display (slave mode) (Addr. 2)
+Telegramme die vom GSD Display verarbeitet werden. 
+Read	Write	Token	Bezeichnung	Beschreibung
+X		68	Auto Off Time	Automatische Abschaltzeit im Ruhezustand 
+	X	69		
+X		70	Imperial	Umschaltung metrische / imperiale Einheiten 
+	X	71		
+X		72	Radumfang	
+	X	73		
+X		74	Ebike demand	
+	X	75		
+X		76	Brakedemand	
+	X	77		
+	X	79		
+X		80	LED brightness
+LCD contrast	Lowbyte = Hintergrundbeleuchtung 
+Highbyte = Kontrast
+
+	X	81		
+X		132	Total Miles (long)	
+X		134	Counter	
+X		136	Total KM (long)	
+X		138		
+X		140	Total Time (long)	
+X		142		
+X		144	Total Energie (long)	
+X		146		
+X		196	Motor err bits
+	
+X		198	Motor Err Code	
+X		200	Batterie Errors	
+X		202	Batterie Safety Status	
+				
+				
+
+
+
+
+
+4.1.1 GOD Display Fehler
+
+Fehlernummer	Fehlerkennung	Beschreibung
+0x20	TXERRORS	Übertragungsfehler
+0x21	TXBUSY	Bus belegt
+0x22	TXBYTETIMEOUT	Übertragungszeit überschritten
+0x23	WRONGADDRECHO	Falsche Adresse antwortet
+0x24	WRONGTOKENECHO	Falsches Token antwortet
+0x25	WRONGVALLOECHO	Falsches Antwort low byte value
+0x26	WRONGVALHIECHO	Falsche Antwort high byte value
+0x27	WRONGCHKSUMECHO	Falsche Checksumme empfangen
+0x28	BADPACKET	System sendet unbekanntes Paket
+0x40	RXBYTETIMEOUT	Empfangszeit überschritten
+0x41	WRONGRXCHKSUM	falsche slave Checksumme
+0x42	WRONGRXADDRESS	falsche slave Adresse  
+0x43	WRONGRXTOKEN	falsches slave token
+0x44	UNKNOWNTOKEN	Unbekanntes slave token
+0x80	TXWARNINGS	
+0xC0	RXPACKETTIMEOUT	Slave Telegramm zu spät empfangen
+0xC1	OTHERRXADDRESS	Unbekannte Adresse
+		
+
+4.2 Motor (Addr. 16)
+4.2.1 Telegramme
+
+Read	Write	Token	Bezeichnung	Beschreibung
+X		2	Motor Error Bits 	(das gleiche wie Token 10) 
+	X	3	Main Motor Control Value	Zentraler Motorsteuerungswert (nur schreibend),
+muß spätestens alle 100ms wiederholt werden!
+Werte in Tabelle 4.3.2
+Der Motor antwortet mit den Error Bits, siehe Tabelle 0
+X		4	Motor revolutions	Umdrehungen seit dem Einschalten
+	X	5		Reseten des Counter mit 0x0000
+X		6	Motor Firmware version and features
+	Firmware version number. Keine Codierung. Zur Zeit ist Version 55 aktuell. 
+X		8	Motor Error Code	Bedeutung siehe Fehlerliste
+X		10	Motor Error Bits	Motor Error Bits.
+If any bits are set while reading, a motor error should be displayed. Further, the master should read out the „Motor Error Code“ (Token 8) and append everything to its error protocol.
+	X	11		Sets external errors (to freewheel the motor, or to ramp it down to zero support depending on error type)
+X		12	Raw torque sensor data	12 bit value
+zero offset absolut. 2000
+Range abt 2000..2200
+Es gibt bisher keine Formel Umrechnung in Nm o.ä.
+X		14	Actual motor speed	Geschwindigkeit in [u/min] 
+X		16	Controller temperature	Motorinnentemperatur umgerechnet in Kelvin
+(Kalibrierpunkt 25°C = 297k)
+X		28	Seriennummer 	unteren 16 bit
+X		30		oberen 16 bit
+X		32	Config Word	
+	X	33		Nur SWAPINPUTS Bit 0x02 im low Byte:
+Bit == 1 ? Pedelec Mode
+Bit == 0 ? Ebike Mode  (Schiebehilfe)
+Gegebenenfalls Umschaltsequenz beachten!
+Siehe Umschaltesequenz Schiebehilfe
+X		68	Current Limit
+	Strombegrenzung. Einheit: [A]
+	X	69		
+X		60	Mileage	Gesamtkilometer. Einheit: [10km] (*)
+
+	X	61		
+				
+(*) Token noch nicht implementiert. Gesamtkilometerleistung wird im Display berechnet/gespeichert.
+4.2.2 Main Motor Control
+Wert ( lowbyte highbyte)	Bedeutung
+0x00 0x05 	Rekuperation Stufe -3
+0x00 0x06 	Rekuperation Stufe -2
+0x00 0x07 	Rekuperation Stufe -1
+0x00 0x08 	Neutral
+0x00 0x09 	Stufe 1
+0x00 0x0A 	Stufe 2
+0x00 0x0B 	Stufe 3
+0x00 0x0C 	Stufe 4
+0x00 0x0D 	Stufe 5
+0x99 0x08	Schiebe- / Anfahrhilfe Mit Token 33 den Ebike Mode ein und ausschalten
+
+4.2.3 Umschaltesequenz Schiebehilfe
+Die Schiebehilfe wird folgende Sequenz von Telegrammen benutzt. Für die Aktivierung wird der Motor in den eBike Mode versetzt und das Main Motor Control mit Wert 0x99 0x08 (lb hb) für die Schiebehilfe gesendet. Für die Deaktivierung wird eine längere Sequenz an Telegrammen benötigt.
+Die Tabelle enthält nur die relevanten Telegramme für die Umschaltung.
+
+Taste Schiebehilfe	Token	Value lb/hb	
+0	Config word	0x02 0x00	Nach dem Einschalten in den Pedelec Mode
+0	(…)		
+0	MMC	0x00 0x0d	Beispiel Stufe 5
+0	(…)		
+1	Config word	0x00 0x00	Ebike mode
+1	MMC	0x99 0x08	Schiebehilfe 
+1	(…)		
+0	MMC	0x00 0x08	Schiebehilfe abschalten
+0	Config word	0x00 0x00	eBike Mode
+0	MMC	0x00 0x08	wird 8x gesendet, abwechselnd mit den „normalen“Telegrammen (Kap. 5)
+0	Config word	0x02 0x00	Pedelec Mode
+0	MMC	0x00 0x0d	Beispiel Stufe 5
+0	(…)		
+
+Der übertragene Wert im MMC gibt die Kraft der Schiebehilfe vor. 2048 ist neutral. Größere Werte erzeugen eine Drehung vorwärts, kleinere eine Drehung rückwärts. 2201 ist der Default-Wert für das alte Display. Die maximale Geschwindigkeit für die Schiebehilfe ist im Motor hinterlegt.
+4.2.4 Schiebehilfe Rückwärts
+Werte im MMC kleiner 2048 erzeugen eine Drehung entgegen der Fahrtrichtung. Hierbei drehen die Pedale rückwärts mit. Diese Funktion wurde bisher nicht genutzt, deshalb ist es möglich, dass der Geschwindigkeitswert falsch eingestellt ist und dies zu hohen Motordrehzahlen führt. 
+Die Schiebehilfe rückwärts sollte also per Default abgeschaltet sein.
+Im neuen Display sollten zwei Werte vom Servicetool änderbar sein, um die Kraft für beide Richtungen der Schiebehilfe einzustellen. Beide Werte sollten von 0-2000  konfigurierbar und positiv sein. Der MMC-Wert wird durch Addition bzw. Subtraktion vom Neutral-Wert berechnet.
+
+MMC-Wert	Beschreibung
+4095	max. Kraft für Drehung vorwärts
+> 2048	Drehung vorwärts
+2201	Default-Wert Schiebehilfe im GSD-Display
+2048	Keine Drehung (neutral)
+< 2048	Drehung Rückwärts
+1	max. Kraft für Drehung rückwärts
+
+4.2.5 Motor Error Bits
+Die Fehlerbits werden als Antwort auf das „MainMotorControlValue“ geschickt. Die Fehlerbits werden mit einem Offset von hundert aufgenommen. Wenn ein Bit aktiv ist, muss das Token 8 abgefragt werden um zusätzliche Informationen zu erhalten.
+
+Bit	Fehlerliste	Fehlerbeschreibung
+0	100	Netzwerk Empfangsfehler
+1	101	Fehler im Konfigurationsmodus
+2	102	kodierter Fehler, siehe folgende ErrCode Information
+3	103	tolerierbarer Feedback-Fehler (Entprellung). Selbsttätiges rücksetzen
+4	104	Fehler im linken Motormodul. Bremse gelöst?
+5	105	Fehler im rechten Motormodul. Bremse gelöst?
+6	106	Fehler in Servomodul. Steuerung blockiert
+7	107	unbekannter Fehler
+8	108	Bussignal steckt fest (permanenter Kurzschluß)
+9	109	unerwartete Bussignaländerung (Transient?)
+10	110	Bussignal auf low gezogen (sporadischer Kurzschluß)
+11	111	Bussignal auf high gezogen (sporadischer Kurzschluß)
+12	112	falsches Bustiming, vorzeitige fallende Flanke
+13	113	unbekannter Fehler
+14	114	unbekannter Fehler
+15	115	weitere Diagnoseinformation verfügbar, falls gewählt
+		
+4.3 Batterie (Addr. 32/33)
+Token-Nummer korrespondiert mit der SMBus Telegramm-Nummer ( siehe sbdat110.pdf und SLUU481.pdf von TI)
+Token = 2 * (SMBus + 1) +ACTION
+ACTION : 
+0 = READ 
+1 = WRITE
+
+
+
+4.3.1 Telegramme
+Read	Write	Token	Bezeichnung	Beschreibung
+X		2	Manufacturer access	Manufacturer specific (see SMB spec). Should include detailed version information. BikeBus string. Wird vom Display nicht benutzt
+	X	3		Manufacturer access (write access, optional)
+X		8	Batterie Mode	
+X		18	Pack temperature	[0,1 K]
+X		20	Pack voltage	[mV]
+X		22	Pack current	[mA]
+X		24	Average Pack current	mA über eine Minute gemittelt
+X		26	Max Error	Max. Abweichung vom akt. Ladezustand
+X		28	Relative state of charge	In Prozent
+
+X		32	Remaining pack capacity	[mAh] oder [Wh] (siehe CAPACITY_MODE)
+X		36	Run time to empty	In Minuten
+X		38	Average time to empty	In Minuten
+X		40	Average time to full	In Minuten
+X		46	Battery Status	Siehe unten.
+X		48	Cycle Count	Anzahl Ladezyklen 
+X		50	Design capacity	mAh oder Wh (siehe CAPACITY_MODE)
+X		52	Design Voltage	[mV]
+X		56	Manufacture date	Siehe unten
+X		58	Serial No	
+X		122	Voltage V1 Cell 1	[mV]
+X		124	Voltage V2 Cell 2	[mV]
+X		126	Voltage V3 Cell 3	[mV]
+X		128	Voltage V4 Cell 4	[mV]
+X		130	Voltage V5 Cell 5	[mV]
+X		132	Voltage V6 Cell 6	[mV]
+X		134	Voltage V7 Cell 7	[mV]
+X		136	Voltage V8 Cell 8	[mV]
+X		138	Voltage V9 Cell 9	[mV]
+X		140	Voltage V10 Cell 10	[mV]
+X		164	Extended Data (Safety status)	Siehe Beschreibung oben unter „Battery Status“. Dieses Token entspricht SMB Code 0x51. Der „bq78PL116“ legt hier beispielsweise weitere Fehlerinfos ab. Siehe SLUU481.pdf
+Müssen wir das auswerten? Müssen wir den Motor ausschalten? -> Beschreibung der Fehler
+Keine Auswertung, siehe Sequenzen
+X		200	Battery Flags
+
+	
+	X	201		Bit 0=1 (0x0001): Charge Inhibit. This flag should shut off the „Charge FETs“ inside the battery management, in order to avoid charge current flow. This is needed to prevent braking effects when the motor back EMF exceeds the battery voltage, at very high speeds. The register should clear itself at powerup of the bus system.
+
+
+4.3.2 Batterie Status bits
+Die Fehlerbits werden mit einem Offset von 10 in die Fehlerliste aufgenommen.
+
+Bit	Kürzel 	Bezeichner
+0	HOCD	Hardware Over Current Discharge
+1	HOCC	Hardware Over Current Charge
+2	HSC	Hardware Short Circuit
+3	EUV	Extreme Cell Under Voltage
+4	HWDG	Host Watchdog Alert
+5	COV	Cell Over Voltage
+6	BOT	Board Over Temperature
+7	CUV	Cell Under Voltage
+8	POV	Pack Over Voltage
+9	PUV	Pack Under Voltage
+10	OCC2	Over Current Charge Tier 2
+11	OCD2	Over Current Discharge Tier 2
+12	OCC	Over Current Charge
+13	OCD	Over Current Discharge
+14	OTC	Over Temperature Charge
+15	OTD	Over Temperature Discharge
+4.3.3  Herstellungsdatum Batterie
+
+Berechnung:
+ (year-1980) * 512 + month * 32 + day
+
+Field	Bits Used	Format	Allowable Values
+Day	0...4	5 bit binary value	1 - 31 (corresponds to date)
+Month	5...8	4 bit binary value	1 - 12 (corresponds to month number)
+Year	9...15	7 bit binary value	0 - 127 (corresponds to year based by 1980)
+
+4.4 Licht(Addr. 48/49)
+4.4.1 Telegramme
+
+Read	Write	Token	Bezeichnung	Beschreibung
+X		2	Status abfragen	
+	X	3	Licht schalten	
+
+
+Wert ( lowbyte)	Bedeutung
+0x00 	Licht aus
+0x01	Fahrlicht an
+0x04 	Fernlicht an
+0x08 	Bremslicht an
+
+
+
+
+4.4.2 Steckerbelegung Supernova
+PinSignal1VCC2GND3BikeBus4Rücklicht 5GND
+
+5 Telegramm Sequenzen
+Das GOD Display sendet die Telegramme wie in der folgenden Tabelle und beginnt danach wieder von vorn. 
+  	
+Ziel	Token	Beschreibung
+Config	0x2	Suche nach Servicetool
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Average time to empty	Abfrage Restlaufzeit
+Motor  	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Motor	get Motor revolutions	
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Motor	Actual motor speed	Abfrage der Geschwindigkeit
+Motor  	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Battery Flags	
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Pack current	Abfrage Stromabgabe
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Average Pack current	Abfrage durchschnittliche Stromabgabe
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Pack voltage	Abfrage Spannung
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Battery Status	Abfrage Status
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Relative state of charge	Abfrage der Kapazität
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Battery	Pack temperature	Abrage Temperatur
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+Motor	Controller temperature	Abfrage Temperatur
+Motor	Main Motor Control Value	Übertragen der Unterstützungsstufe
+
+
+Nach dem Einschalten wird einmalig das Config Word geschickt. Damit wird der Motor in den Pedelec-Betrieb versetzt. Weiterhin wird der max. Batteriestrom abgefragt. Die Ströme für die Unterstützungsstufen werden mit dem max. zulässigen Strom abgeglichen und darauf begrenzt. 
+Im Beispiel unten wird der max. Strom abgefragt und der Motor antwortet darauf mit 20A.
+
+Motor	Config Word (0x21)	0x02 0x00 	0x33
+Display	0x21	0x02 0x06 	0x2A
+Battery	Current Limit (0x44)	0x00 0x00 	0x54
+Display	0x44	0x14 0x00 	0x59
+In der folgenden Tabelle sind die Antworttelegramme der anderen Komponenten mit ausgeführt.
+
+Ziel	Token	Wert(lb , hb)	Checksumme
+Config	0x2	0x00 0x00	0xF2
+Auf diese Anfrage gibt es nur eine Antwort, wenn ein Servicetool (USB+SW) aktiv ist.
+
+Motor	Main Motor Control Value	0x00 0x08	0x1B
+Display	0x03	0x00 0x00 	0x04
+Vorgabe der Unterstützungstufe, Rekuperationsstufe oder Aktivierung Schiebehilfe. Siehe 4.2.2
+
+Battery	Average time to empty	0x00 0x00 	0x46
+Display	0x26	0x6A 0x53	0xE4
+
+Motor	get Motor revolutions	0x00 0x00 	0x14
+Display	0x04	0x00 0x00 	0x05
+Umdrehungen seit dem Einschalten. Für z.B. Tageskilometerzähler
+
+Motor	Actual motor speed	0x00 0x00 	0x1E
+Display	0x0E			0x28 0x00	0x37
+Einheit des Rückgabewertes U/min, hier 0x0028 (dez. 40)
+Umrechnung auf km/h: 40 * 2222 * 60 / 1000000 = 5,3
+2222mm ist der Reifenumfang bei 28“
+Battery	Battery Flags	0x00 0x00 	0xE9
+Display	0xC9	0x00 0x00 	0xCA
+
+Motor	Config Word	0x02 0x00	0x33
+Display	0x21	0x02 0x06	0x2A
+Dieses Telegramm wird nur im ersten Durchlauf geschickt. Damit wird der Motor in der Pedelecbetrieb versetzt.
+
+Battery	Current limit (0x45)	0x08 0x00	0x5D
+Display	0x45	0x08 0x00	0x4E
+Dieses Telegramm wird nach Änderung der Unterstützungsstufe geschickt. Der max. Strom pro Stufe soll über das Servicetool änderbar sein. Hier werden 8A gesendet.
+Battery	Pack current	0x00 0x00 	0x36
+Display	0x16	0x00 0x00 	0x17
+
+Battery	Average Pack current	0x00 0x00 	0x38
+Display	0x18	0xFE 0xFF	0x16
+
+Battery	Pack voltage	0x00 0x00 	0x34
+Display	0x14	0xA8 0x98	0x55
+
+Battery	Battery Status	0x00 0x00 	0x4E
+Display	0x2E	0x00 0x00 	0x2F
+
+Battery	Relative state of charge	0x00 0x00 	0x3C
+Display	0x1C	0x41 0x00	0x5E
+
+Battery	Pack temperature	0x00 0x00 	0x32
+Display	0x12	0x03 0x02	0x18
+
+Motor	Controller temperature	0x00 0x00 	0x20
+Display	0x10	0x26 0x01	0x38
+Rückgabewert in °Kelvin
+6 Events
+In Kapitel 5 ist der Ablauf der Telegramme für den Fahrbetrieb aufgelistet. In bestimmten Situationen werden weitere Telegramme hinzugefügt, bzw. Werte geändert.
+ 
+EventAuswirkungBremskontakt schließt- Rekuperationstufe einschalten
+- (Bremslicht einschalten)Bremskontakt öffnet- in vorherige Stufe zurückschalten
+- (Bremslicht ausgeschaltet)Unterstützungsstufe umgeschaltetmax. Stromaufnahme an den Motor senden
+		
+
+
+
+   	Seite 15 von 15	
+
