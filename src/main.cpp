@@ -58,6 +58,15 @@
 #define BATTERY_TOKEN_MANUF_DATE    56
 #define BATTERY_TOKEN_SERIAL        58
 #define BATTERY_TOKEN_CELL1         122
+#define BATTERY_TOKEN_CELL2         124
+#define BATTERY_TOKEN_CELL3         126
+#define BATTERY_TOKEN_CELL4         128
+#define BATTERY_TOKEN_CELL5         130
+#define BATTERY_TOKEN_CELL6         132
+#define BATTERY_TOKEN_CELL7         134
+#define BATTERY_TOKEN_CELL8         136
+#define BATTERY_TOKEN_CELL9         138
+#define BATTERY_TOKEN_CELL10        140
 #define BATTERY_TOKEN_EXTENDED_DATA 164
 #define BATTERY_TOKEN_FLAGS_R       200
 #define BATTERY_TOKEN_FLAGS_W       201
@@ -94,6 +103,12 @@
 #define BIKEBUS_RX_TIMEOUT          10
 #define MOTOR_SAFETY_TIMEOUT        100
 
+// Debug flag - set to true to print hex messages
+#define BIKEBUS_DEBUG               true
+
+// wheel circumference (in mm)
+#define WHEEL_CIRCUMFERENCE          2222
+
 // ============================================================================
 // BikeBus Communication Class
 // ============================================================================
@@ -114,7 +129,7 @@ private:
     
     // Motor state
     uint16_t motorControlValue;
-    uint16_t motorSpeed;          // in RPM
+    int16_t motorSpeed;           // in RPM (can be negative for reverse)
     uint16_t motorRevolutions;
     uint16_t motorTemperature;    // in Kelvin
     uint16_t motorErrorBits;
@@ -147,12 +162,31 @@ private:
         txBuffer[4] = calculateChecksum(txBuffer);
         
         serial->write(txBuffer, 5);
+        serial->flush(); // Wait for transmission to complete
+        
+        // Clear receive buffer to remove echo of transmitted bytes
+        delay(2); // Small delay to ensure transmitted bytes appear in RX buffer
+        while (serial->available()) {
+            serial->read();
+        }
+        
+        // Debug: Print sent message
+        if (BIKEBUS_DEBUG) {
+            Serial.print("TX: ");
+            for (int i = 0; i < 5; i++) {
+                if (txBuffer[i] < 0x10) Serial.print("0");
+                Serial.print(txBuffer[i], HEX);
+                Serial.print(" ");
+            }
+            Serial.println();
+        }
         
         currentAddress = address;
         currentToken = token;
         waitingForResponse = true;
         lastTxTime = millis();
         
+
         return true;
     }
     
@@ -167,15 +201,43 @@ private:
                 bytesRead++;
                 
                 if (bytesRead >= 5) {
+                    // Debug: Print received message
+                    if (BIKEBUS_DEBUG) {
+                        Serial.print("RX: ");
+                        for (int i = 0; i < 5; i++) {
+                            if (rxBuffer[i] < 0x10) Serial.print("0");
+                            Serial.print(rxBuffer[i], HEX);
+                            Serial.print(" ");
+                        }
+                        Serial.println();
+                    }
+                    
                     // Verify checksum
                     uint8_t expectedChecksum = calculateChecksum(rxBuffer);
                     if (rxBuffer[4] == expectedChecksum) {
                         waitingForResponse = false;
                         return true;
                     }
+                    
+                    // Debug: Print checksum error
+                    if (BIKEBUS_DEBUG) {
+                        Serial.print("Checksum error! Expected: 0x");
+                        if (expectedChecksum < 0x10) Serial.print("0");
+                        Serial.print(expectedChecksum, HEX);
+                        Serial.print(", Got: 0x");
+                        if (rxBuffer[4] < 0x10) Serial.print("0");
+                        Serial.println(rxBuffer[4], HEX);
+                    }
                     return false;
                 }
             }
+        }
+        
+        // Debug: Print timeout
+        if (BIKEBUS_DEBUG) {
+            Serial.print("RX timeout after ");
+            Serial.print(bytesRead);
+            Serial.println(" bytes");
         }
         return false;
     }
@@ -328,14 +390,14 @@ public:
         unsigned long currentTime = millis();
         
         // Safety check: Motor must receive control telegram every 100ms
-        if (motorConfigured && (currentTime - lastMotorControlTime >= MOTOR_SAFETY_TIMEOUT)) {
+        /*if (motorConfigured && (currentTime - lastMotorControlTime >= MOTOR_SAFETY_TIMEOUT)) {
             sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_MAIN_CONTROL, motorControlValue);
             lastMotorControlTime = currentTime;
             if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
                 processResponse();
             }
             return;
-        }
+        }*/
         
         // Check if enough time has passed for next telegram
         bool shouldSend = false;
@@ -419,12 +481,11 @@ public:
     }
     
     // Getters
-    uint16_t getMotorSpeed() { return motorSpeed; }  // RPM
-    float getSpeedKmh(uint16_t wheelCircumMm = 2222) {
-        return (motorSpeed * wheelCircumMm * 60.0) / 1000000.0;
-    }
+    int16_t getMotorSpeed() { return motorSpeed; }  // RPM (can be negative)
+    float getSpeedKmh() { return (motorSpeed * WHEEL_CIRCUMFERENCE * 60.0) / 1000000.0; }
     uint16_t getMotorRevolutions() { return motorRevolutions; }
     uint16_t getMotorTemperature() { return motorTemperature; }
+    float getMotorTempC() { return motorTemperature - 273.15; }
     uint16_t getMotorErrorBits() { return motorErrorBits; }
     uint8_t getMotorErrorCode() { return motorErrorCode; }
     
@@ -445,7 +506,7 @@ public:
 
 BikeBus bikeBus(&Serial2);  // Use Serial2 for BikeBus communication
 unsigned long lastDisplayUpdate = 0;
-uint8_t currentSupportLevel = 3;  // Default to level 3
+uint8_t currentSupportLevel = 5;  // Default to level 5
 
 // ============================================================================
 // Setup
@@ -455,6 +516,11 @@ void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
     
+    // Initialize USB Serial for debug output
+    Serial.begin(115200);
+    while (!Serial && millis() < 3000); // Wait up to 3 seconds for Serial
+    Serial.println("\n\n=== BikeBus Display Starting ===");
+    
     // Initialize GPIO 26 for device power/enable
     pinMode(26, OUTPUT);
     digitalWrite(26, HIGH);
@@ -463,11 +529,11 @@ void setup() {
     M5.Display.setTextColor(WHITE);
     
     // Initialize BikeBus on Serial2
-    // Pin configuration for M5Stack Core2: RX=13, TX=14 (adjust as needed)
+    // Pin configuration for M5Stack Core2: RX=13, TX=14
     bikeBus.begin(9600);
     
     // Small delay for bus stabilization
-    delay(100);
+    delay(10);
     
     // Initialize motor
     bikeBus.initializeMotor();
@@ -478,7 +544,7 @@ void setup() {
     M5.Display.println("BikeBus Display");
     M5.Display.println("Initialized");
     
-    delay(1000);
+    delay(10);
 }
 
 // ============================================================================
@@ -533,7 +599,7 @@ void loop() {
         M5.Display.setTextColor(WHITE);
         M5.Display.printf("  Level: %d\n", currentSupportLevel);
         M5.Display.printf("  Speed: %.1f km/h\n", bikeBus.getSpeedKmh());
-        M5.Display.printf("  Temp:  %d K\n", bikeBus.getMotorTemperature());
+        M5.Display.printf("  Temp:  %.1f C\n", bikeBus.getMotorTempC());
         
         // Display battery info
         M5.Display.setTextColor(GREEN);
