@@ -508,6 +508,15 @@ BikeBus bikeBus(&Serial2);  // Use Serial2 for BikeBus communication
 unsigned long lastDisplayUpdate = 0;
 uint8_t currentSupportLevel = 5;  // Default to level 5
 
+// Previous values for display update detection
+float prevSpeed = -1;
+uint8_t prevSOC = 255;
+uint8_t prevLevel = 0;
+uint16_t prevErrorBits = 0;
+float prevVoltage = -1;
+float prevCurrent = 999;
+float prevTemp = -999;
+
 // ============================================================================
 // Setup
 // ============================================================================
@@ -585,41 +594,152 @@ void loop() {
     if (millis() - lastDisplayUpdate >= 200) {
         lastDisplayUpdate = millis();
         
+        // Get current values
+        float speed = bikeBus.getSpeedKmh();
+        if (speed < 0) speed = 0;
+        if (speed > 50) speed = 50;
+        
+        uint8_t soc = bikeBus.getBatterySOC();
+        if (soc > 100) soc = 100;
+        
+        uint16_t errorBits = bikeBus.getMotorErrorBits();
+        float voltage = bikeBus.getBatteryVoltageV();
+        float current = bikeBus.getBatteryCurrentA();
+        float temp = bikeBus.getMotorTempC();
+        
+        // Check if we need to redraw (first time or value changed significantly)
+        bool needsRedraw = (prevSpeed < 0) || 
+                          (abs(speed - prevSpeed) > 0.5) ||
+                          (soc != prevSOC) ||
+                          (currentSupportLevel != prevLevel) ||
+                          (errorBits != prevErrorBits) ||
+                          (abs(voltage - prevVoltage) > 0.1) ||
+                          (abs(current - prevCurrent) > 0.1) ||
+                          (abs(temp - prevTemp) > 1.0);
+        
+        if (!needsRedraw) return;
+        
+        // Store current values
+        prevSpeed = speed;
+        prevSOC = soc;
+        prevLevel = currentSupportLevel;
+        prevErrorBits = errorBits;
+        prevVoltage = voltage;
+        prevCurrent = current;
+        prevTemp = temp;
+        
+        // Clear display once
         M5.Display.clear();
-        M5.Display.setCursor(10, 10);
         
-        // Display header
+        // Common gauge parameters
+        int gaugeX = 20;
+        int gaugeWidth = 280;
+        int gaugeHeight = 40;
+        int labelWidth = 80;
+        int barX = gaugeX + labelWidth;
+        int barWidth = gaugeWidth - labelWidth;
+        
+        // === SPEED GAUGE (Top) ===
+        int speedY = 20;
+        
+        // Label
         M5.Display.setTextColor(YELLOW);
-        M5.Display.println("=== BikeBus Display ===");
-        M5.Display.println();
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(gaugeX, speedY + 12);
+        M5.Display.print("SPEED");
         
-        // Display motor info
-        M5.Display.setTextColor(GREEN);
-        M5.Display.println("MOTOR:");
-        M5.Display.setTextColor(WHITE);
-        M5.Display.printf("  Level: %d\n", currentSupportLevel);
-        M5.Display.printf("  Speed: %.1f km/h\n", bikeBus.getSpeedKmh());
-        M5.Display.printf("  Temp:  %.1f C\n", bikeBus.getMotorTempC());
+        // Draw gauge border
+        M5.Display.drawRect(barX, speedY, barWidth, gaugeHeight, WHITE);
         
-        // Display battery info
-        M5.Display.setTextColor(GREEN);
-        M5.Display.println("BATTERY:");
-        M5.Display.setTextColor(WHITE);
-        M5.Display.printf("  SOC:   %d%%\n", bikeBus.getBatterySOC());
-        M5.Display.printf("  Volt:  %.1f V\n", bikeBus.getBatteryVoltageV());
-        M5.Display.printf("  Curr:  %.1f A\n", bikeBus.getBatteryCurrentA());
-        M5.Display.printf("  Temp:  %.1f C\n", bikeBus.getBatteryTempC());
+        // Calculate speed fill (0-50 km/h)
+        int speedFillWidth = (barWidth - 4) * speed / 50.0;
         
-        // Display errors if any
-        if (bikeBus.getMotorErrorBits() != 0) {
-            M5.Display.setTextColor(RED);
-            M5.Display.printf("\nERROR: 0x%04X\n", bikeBus.getMotorErrorBits());
+        // Fill the gauge
+        if (speedFillWidth > 0) {
+            M5.Display.fillRect(barX + 2, speedY + 2, speedFillWidth, gaugeHeight - 4, YELLOW);
         }
         
-        // Button legend
-        M5.Display.setCursor(10, 220);
+        // Display speed value on gauge
+        M5.Display.setTextColor(WHITE);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(barX + barWidth/2 - 35, speedY + 12);
+        M5.Display.printf("%.1f km/h", speed);
+        
+        // === BATTERY SOC GAUGE (Middle) ===
+        int socY = 90;
+        
+        // Label
+        M5.Display.setTextColor(GREEN);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(gaugeX, socY + 12);
+        M5.Display.print("CHARGE");
+        
+        // Draw gauge border
+        M5.Display.drawRect(barX, socY, barWidth, gaugeHeight, WHITE);
+        
+        // Calculate SOC fill
+        int socFillWidth = (barWidth - 4) * soc / 100;
+        
+        // Color based on SOC level
+        uint16_t socColor;
+        if (soc > 50) {
+            socColor = GREEN;
+        } else if (soc > 20) {
+            socColor = ORANGE;
+        } else {
+            socColor = RED;
+        }
+        
+        // Fill the gauge
+        if (socFillWidth > 0) {
+            M5.Display.fillRect(barX + 2, socY + 2, socFillWidth, gaugeHeight - 4, socColor);
+        }
+        
+        // Display SOC percentage on gauge
+        M5.Display.setTextColor(WHITE);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(barX + barWidth/2 - 20, socY + 12);
+        M5.Display.printf("%d%%", soc);
+        
+        // === SUPPORT LEVEL GAUGE (Bottom) ===
+        int levelY = 160;
+        
+        // Label
         M5.Display.setTextColor(CYAN);
-        M5.Display.println("A:-  B:Light  C:+");
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(gaugeX, levelY + 12);
+        M5.Display.print("LEVEL");
+        
+        // Draw gauge border
+        M5.Display.drawRect(barX, levelY, barWidth, gaugeHeight, WHITE);
+        
+        // Calculate fill for support level (1-5)
+        int levelFillWidth = (barWidth - 4) * currentSupportLevel / 5;
+        
+        // Fill the gauge
+        if (levelFillWidth > 0) {
+            M5.Display.fillRect(barX + 2, levelY + 2, levelFillWidth, gaugeHeight - 4, CYAN);
+        }
+        
+        // Display level value on gauge
+        M5.Display.setTextColor(WHITE);
+        M5.Display.setTextSize(3);
+        M5.Display.setCursor(barX + barWidth/2 - 10, levelY + 8);
+        M5.Display.printf("%d", currentSupportLevel);
+        
+        // Display errors if any (top right corner)
+        if (errorBits != 0) {
+            M5.Display.setTextColor(RED);
+            M5.Display.setTextSize(1);
+            M5.Display.setCursor(10, 5);
+            M5.Display.printf("ERR:0x%04X", errorBits);
+        }
+        
+        // Display additional info at bottom
+        M5.Display.setTextColor(DARKGREY);
+        M5.Display.setTextSize(1);
+        M5.Display.setCursor(gaugeX, 220);
+        M5.Display.printf("V:%.1fV I:%.1fA T:%.0fC", voltage, current, temp);
     }
     
     delay(10);
