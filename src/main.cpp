@@ -100,7 +100,7 @@
 // Timing constants (in milliseconds)
 #define BIKEBUS_TX_INTERVAL         20
 #define BIKEBUS_TX_RETRY_INTERVAL   30
-#define BIKEBUS_RX_TIMEOUT          10
+#define BIKEBUS_RX_TIMEOUT          25
 #define MOTOR_SAFETY_TIMEOUT        100
 
 // Debug flag - set to true to print hex messages
@@ -155,6 +155,7 @@ private:
     
     // Send telegram
     bool sendTelegram(uint8_t address, uint8_t token, uint16_t value) {
+        lastTxTime = millis();
         txBuffer[0] = address;
         txBuffer[1] = token;
         txBuffer[2] = value & 0xFF;        // Low byte
@@ -184,8 +185,6 @@ private:
         currentAddress = address;
         currentToken = token;
         waitingForResponse = true;
-        lastTxTime = millis();
-        
 
         return true;
     }
@@ -389,16 +388,6 @@ public:
     void update() {
         unsigned long currentTime = millis();
         
-        // Safety check: Motor must receive control telegram every 100ms
-        /*if (motorConfigured && (currentTime - lastMotorControlTime >= MOTOR_SAFETY_TIMEOUT)) {
-            sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_MAIN_CONTROL, motorControlValue);
-            lastMotorControlTime = currentTime;
-            if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
-                processResponse();
-            }
-            return;
-        }*/
-        
         // Check if enough time has passed for next telegram
         bool shouldSend = false;
         if (waitingForResponse) {
@@ -516,6 +505,131 @@ uint16_t prevErrorBits = 0;
 float prevVoltage = -1;
 float prevCurrent = 999;
 float prevTemp = -999;
+bool displayInitialized = false;
+
+// Common gauge parameters (constants)
+const int gaugeX = 20;
+const int gaugeWidth = 280;
+const int gaugeHeight = 40;
+const int labelWidth = 80;
+const int barX = gaugeX + labelWidth;
+const int barWidth = gaugeWidth - labelWidth;
+const int speedY = 20;
+const int socY = 90;
+const int levelY = 160;
+
+// Function to draw static display elements (labels and borders)
+void drawStaticElements() {
+    // SPEED label and border
+    M5.Display.setTextColor(YELLOW);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(gaugeX, speedY + 12);
+    M5.Display.print("SPEED");
+    M5.Display.drawRect(barX, speedY, barWidth, gaugeHeight, WHITE);
+    
+    // BATTERY label and border
+    M5.Display.setTextColor(GREEN);
+    M5.Display.setCursor(gaugeX, socY + 12);
+    M5.Display.print("CHARGE");
+    M5.Display.drawRect(barX, socY, barWidth, gaugeHeight, WHITE);
+    
+    // LEVEL label and border
+    M5.Display.setTextColor(CYAN);
+    M5.Display.setCursor(gaugeX, levelY + 12);
+    M5.Display.print("LEVEL");
+    M5.Display.drawRect(barX, levelY, barWidth, gaugeHeight, WHITE);
+}
+
+// Function to update speed gauge
+void updateSpeedGauge(float speed) {
+    // Clear the gauge area (inside the border)
+    M5.Display.fillRect(barX + 2, speedY + 2, barWidth - 4, gaugeHeight - 4, BLACK);
+    
+    // Calculate and draw fill
+    int speedFillWidth = (barWidth - 4) * speed / 50.0;
+    if (speedFillWidth > 0) {
+        M5.Display.fillRect(barX + 2, speedY + 2, speedFillWidth, gaugeHeight - 4, CYAN);
+    }
+    
+    // Draw speed value
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(barX + barWidth/2 - 35, speedY + 12);
+    M5.Display.printf("%.1f km/h", speed);
+}
+
+// Function to update SOC gauge
+void updateSOCGauge(uint8_t soc) {
+    // Clear the gauge area (inside the border)
+    M5.Display.fillRect(barX + 2, socY + 2, barWidth - 4, gaugeHeight - 4, BLACK);
+    
+    // Calculate and draw fill
+    int socFillWidth = (barWidth - 4) * soc / 100;
+    
+    // Color based on SOC level
+    uint16_t socColor;
+    if (soc > 50) {
+        socColor = GREEN;
+    } else if (soc > 20) {
+        socColor = ORANGE;
+    } else {
+        socColor = RED;
+    }
+    
+    if (socFillWidth > 0) {
+        M5.Display.fillRect(barX + 2, socY + 2, socFillWidth, gaugeHeight - 4, socColor);
+    }
+    
+    // Draw SOC percentage
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(barX + barWidth/2 - 20, socY + 12);
+    M5.Display.printf("%d%%", soc);
+}
+
+// Function to update level gauge
+void updateLevelGauge(uint8_t level) {
+    // Clear the gauge area (inside the border)
+    M5.Display.fillRect(barX + 2, levelY + 2, barWidth - 4, gaugeHeight - 4, BLACK);
+    
+    // Calculate and draw fill
+    int levelFillWidth = (barWidth - 4) * level / 5;
+    if (levelFillWidth > 0) {
+        M5.Display.fillRect(barX + 2, levelY + 2, levelFillWidth, gaugeHeight - 4, MAGENTA);
+    }
+    
+    // Draw level value
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(3);
+    M5.Display.setCursor(barX + barWidth/2 - 10, levelY + 8);
+    M5.Display.printf("%d", level);
+}
+
+// Function to update bottom info line
+void updateBottomInfo(float voltage, float current, float temp) {
+    // Clear the bottom info area
+    M5.Display.fillRect(gaugeX, 220, 280, 10, BLACK);
+    
+    // Draw info
+    M5.Display.setTextColor(DARKGREY);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(gaugeX, 220);
+    M5.Display.printf("V:%.1fV I:%.1fA T:%.0fC", voltage, current, temp);
+}
+
+// Function to update error display
+void updateErrorDisplay(uint16_t errorBits) {
+    // Clear error area
+    M5.Display.fillRect(10, 5, 150, 10, BLACK);
+    
+    // Draw error if present
+    if (errorBits != 0) {
+        M5.Display.setTextColor(RED);
+        M5.Display.setTextSize(1);
+        M5.Display.setCursor(10, 5);
+        M5.Display.printf("ERR:0x%04X", errorBits);
+    }
+}
 
 // ============================================================================
 // Setup
@@ -582,6 +696,20 @@ void loop() {
         bikeBus.setLight(lightOn ? LIGHT_DRIVE : LIGHT_OFF);
     }
     
+    // Check for long press on Button B (hold for 3 seconds to power off)
+    if (M5.BtnB.pressedFor(3000)) {
+        // Show power off message
+        M5.Display.fillScreen(BLACK);
+        M5.Display.setTextColor(RED);
+        M5.Display.setTextSize(3);
+        M5.Display.setCursor(60, 100);
+        M5.Display.println("POWERING OFF...");
+        delay(1000);
+        
+        // Power off the device
+        M5.Power.powerOff();
+    }
+    
     if (M5.BtnC.wasPressed()) {
         // Increase support level
         if (currentSupportLevel < 5) {
@@ -607,140 +735,51 @@ void loop() {
         float current = bikeBus.getBatteryCurrentA();
         float temp = bikeBus.getMotorTempC();
         
-        // Check if we need to redraw (first time or value changed significantly)
-        bool needsRedraw = (prevSpeed < 0) || 
-                          (abs(speed - prevSpeed) > 0.5) ||
-                          (soc != prevSOC) ||
-                          (currentSupportLevel != prevLevel) ||
-                          (errorBits != prevErrorBits) ||
-                          (abs(voltage - prevVoltage) > 0.1) ||
-                          (abs(current - prevCurrent) > 0.1) ||
-                          (abs(temp - prevTemp) > 1.0);
-        
-        if (!needsRedraw) return;
-        
-        // Store current values
-        prevSpeed = speed;
-        prevSOC = soc;
-        prevLevel = currentSupportLevel;
-        prevErrorBits = errorBits;
-        prevVoltage = voltage;
-        prevCurrent = current;
-        prevTemp = temp;
-        
-        // Clear display once
-        M5.Display.clear();
-        
-        // Common gauge parameters
-        int gaugeX = 20;
-        int gaugeWidth = 280;
-        int gaugeHeight = 40;
-        int labelWidth = 80;
-        int barX = gaugeX + labelWidth;
-        int barWidth = gaugeWidth - labelWidth;
-        
-        // === SPEED GAUGE (Top) ===
-        int speedY = 20;
-        
-        // Label
-        M5.Display.setTextColor(YELLOW);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(gaugeX, speedY + 12);
-        M5.Display.print("SPEED");
-        
-        // Draw gauge border
-        M5.Display.drawRect(barX, speedY, barWidth, gaugeHeight, WHITE);
-        
-        // Calculate speed fill (0-50 km/h)
-        int speedFillWidth = (barWidth - 4) * speed / 50.0;
-        
-        // Fill the gauge
-        if (speedFillWidth > 0) {
-            M5.Display.fillRect(barX + 2, speedY + 2, speedFillWidth, gaugeHeight - 4, YELLOW);
+        // Initialize display on first run
+        if (!displayInitialized) {
+            M5.Display.clear();
+            drawStaticElements();
+            displayInitialized = true;
+            
+            // Force initial draw of all values
+            prevSpeed = -999;
+            prevSOC = 255;
+            prevLevel = 0;
+            prevErrorBits = 0xFFFF;
+            prevVoltage = -999;
+            prevCurrent = 999;
+            prevTemp = -999;
         }
         
-        // Display speed value on gauge
-        M5.Display.setTextColor(WHITE);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(barX + barWidth/2 - 35, speedY + 12);
-        M5.Display.printf("%.1f km/h", speed);
-        
-        // === BATTERY SOC GAUGE (Middle) ===
-        int socY = 90;
-        
-        // Label
-        M5.Display.setTextColor(GREEN);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(gaugeX, socY + 12);
-        M5.Display.print("CHARGE");
-        
-        // Draw gauge border
-        M5.Display.drawRect(barX, socY, barWidth, gaugeHeight, WHITE);
-        
-        // Calculate SOC fill
-        int socFillWidth = (barWidth - 4) * soc / 100;
-        
-        // Color based on SOC level
-        uint16_t socColor;
-        if (soc > 50) {
-            socColor = GREEN;
-        } else if (soc > 20) {
-            socColor = ORANGE;
-        } else {
-            socColor = RED;
+        // Update only changed elements
+        if (abs(speed - prevSpeed) > 0.5) {
+            updateSpeedGauge(speed);
+            prevSpeed = speed;
         }
         
-        // Fill the gauge
-        if (socFillWidth > 0) {
-            M5.Display.fillRect(barX + 2, socY + 2, socFillWidth, gaugeHeight - 4, socColor);
+        if (soc != prevSOC) {
+            updateSOCGauge(soc);
+            prevSOC = soc;
         }
         
-        // Display SOC percentage on gauge
-        M5.Display.setTextColor(WHITE);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(barX + barWidth/2 - 20, socY + 12);
-        M5.Display.printf("%d%%", soc);
-        
-        // === SUPPORT LEVEL GAUGE (Bottom) ===
-        int levelY = 160;
-        
-        // Label
-        M5.Display.setTextColor(CYAN);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(gaugeX, levelY + 12);
-        M5.Display.print("LEVEL");
-        
-        // Draw gauge border
-        M5.Display.drawRect(barX, levelY, barWidth, gaugeHeight, WHITE);
-        
-        // Calculate fill for support level (1-5)
-        int levelFillWidth = (barWidth - 4) * currentSupportLevel / 5;
-        
-        // Fill the gauge
-        if (levelFillWidth > 0) {
-            M5.Display.fillRect(barX + 2, levelY + 2, levelFillWidth, gaugeHeight - 4, CYAN);
+        if (currentSupportLevel != prevLevel) {
+            updateLevelGauge(currentSupportLevel);
+            prevLevel = currentSupportLevel;
         }
         
-        // Display level value on gauge
-        M5.Display.setTextColor(WHITE);
-        M5.Display.setTextSize(3);
-        M5.Display.setCursor(barX + barWidth/2 - 10, levelY + 8);
-        M5.Display.printf("%d", currentSupportLevel);
-        
-        // Display errors if any (top right corner)
-        if (errorBits != 0) {
-            M5.Display.setTextColor(RED);
-            M5.Display.setTextSize(1);
-            M5.Display.setCursor(10, 5);
-            M5.Display.printf("ERR:0x%04X", errorBits);
+        if (errorBits != prevErrorBits) {
+            updateErrorDisplay(errorBits);
+            prevErrorBits = errorBits;
         }
         
-        // Display additional info at bottom
-        M5.Display.setTextColor(DARKGREY);
-        M5.Display.setTextSize(1);
-        M5.Display.setCursor(gaugeX, 220);
-        M5.Display.printf("V:%.1fV I:%.1fA T:%.0fC", voltage, current, temp);
+        if (abs(voltage - prevVoltage) > 0.1 || 
+            abs(current - prevCurrent) > 0.1 || 
+            abs(temp - prevTemp) > 1.0) {
+            updateBottomInfo(voltage, current, temp);
+            prevVoltage = voltage;
+            prevCurrent = current;
+            prevTemp = temp;
+        }
     }
     
-    delay(10);
 }
