@@ -1,0 +1,14 @@
+{
+  "name": "BikeBus",
+  "version": "1.0.0",
+  "description": "BikeBus v1.8 protocol implementation for e-bike communication systems",
+  "keywords": ["bikebus", "ebike", "pedelec", "motor", "battery", "communication", "protocol"],
+  "authors": [
+    {
+      "name": "BikeBusDisplay Project"
+    }
+  ],
+  "license": "MIT",
+  "frameworks": ["arduino"],
+  "platforms": "*"
+}
