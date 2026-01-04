@@ -8,7 +8,8 @@
 
 BikeBus bikeBus(&Serial2, 2222);  // Use Serial2 for BikeBus communication, wheel circumference 2222mm
 unsigned long lastDisplayUpdate = 0;
-uint8_t currentSupportLevel = 5;  // Default to level 5
+uint8_t currentSupportLevel = 0;  // Default to level 0
+bool pushAssistActive = false;    // Track push assist state
 
 // Previous values for display update detection
 float prevSpeed = -1;
@@ -18,6 +19,8 @@ uint16_t prevErrorBits = 0;
 float prevVoltage = -1;
 float prevCurrent = 999;
 float prevTemp = -999;
+uint16_t prevMotorCurrentLimit = 0;
+bool prevPushAssist = false;
 bool displayInitialized = false;
 
 // Common gauge parameters (constants)
@@ -101,33 +104,48 @@ void updateSOCGauge(uint8_t soc) {
 }
 
 // Function to update level gauge
-void updateLevelGauge(uint8_t level) {
+void updateLevelGauge(uint8_t level, bool pushActive = false) {
     // Clear the gauge area (inside the border)
     M5.Display.fillRect(barX + 2, levelY + 2, barWidth - 4, gaugeHeight - 4, BLACK);
     
-    // Calculate and draw fill
-    int levelFillWidth = (barWidth - 4) * level / 5;
-    if (levelFillWidth > 0) {
-        M5.Display.fillRect(barX + 2, levelY + 2, levelFillWidth, gaugeHeight - 4, MAGENTA);
+    if (pushActive) {
+        // Fill entire bar in orange/yellow for push assist
+        M5.Display.fillRect(barX + 2, levelY + 2, barWidth - 4, gaugeHeight - 4, ORANGE);
+        
+        // Draw "PUSH" text
+        M5.Display.setTextColor(BLACK);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(barX + barWidth/2 - 30, levelY + 12);
+        M5.Display.print("PUSH");
+    } else {
+        // Calculate and draw fill
+        int levelFillWidth = (barWidth - 4) * level / 5;
+        if (levelFillWidth > 0) {
+            M5.Display.fillRect(barX + 2, levelY + 2, levelFillWidth, gaugeHeight - 4, MAGENTA);
+        }
+        
+        // Draw level value
+        M5.Display.setTextColor(WHITE);
+        M5.Display.setTextSize(3);
+        M5.Display.setCursor(barX + barWidth/2 - 10, levelY + 8);
+        M5.Display.printf("%d", level);
     }
-    
-    // Draw level value
-    M5.Display.setTextColor(WHITE);
-    M5.Display.setTextSize(3);
-    M5.Display.setCursor(barX + barWidth/2 - 10, levelY + 8);
-    M5.Display.printf("%d", level);
 }
 
 // Function to update bottom info line
-void updateBottomInfo(float voltage, float current, float temp) {
+void updateBottomInfo(float voltage, float current, float temp, uint16_t currentLimit) {
     // Clear the bottom info area
-    M5.Display.fillRect(gaugeX, 220, 280, 10, BLACK);
+    M5.Display.fillRect(gaugeX, 220, 280, 20, BLACK);
     
-    // Draw info
+    // Draw info - first line
     M5.Display.setTextColor(DARKGREY);
     M5.Display.setTextSize(1);
     M5.Display.setCursor(gaugeX, 220);
     M5.Display.printf("V:%.1fV I:%.1fA T:%.0fC", voltage, current, temp);
+    
+    // Draw info - second line with motor current limit
+    M5.Display.setCursor(gaugeX, 228);
+    M5.Display.printf("Motor Limit: %dA", currentLimit);
 }
 
 // Function to update error display
@@ -157,10 +175,6 @@ void setup() {
     while (!Serial && millis() < 3000); // Wait up to 3 seconds for Serial
     Serial.println("\n\n=== BikeBus Display Starting ===");
     
-    // Initialize GPIO 26 for device power/enable
-    pinMode(26, OUTPUT);
-    digitalWrite(26, HIGH);
-    
     M5.Display.setTextSize(2);
     M5.Display.setTextColor(WHITE);
     
@@ -169,19 +183,41 @@ void setup() {
     bikeBus.begin(9600);
     bikeBus.setDebug(true);  // Enable debug output
     
+    // Initialize GPIO 26 for device power/enable
+    pinMode(26, OUTPUT);
+    digitalWrite(26, HIGH);
+
     // Small delay for bus stabilization
     delay(10);
     
     // Initialize motor
     bikeBus.initializeMotor();
+    delay(10);
+
+    // Query motor current limit
+    bikeBus.queryMotorCurrentLimit();
+    delay(10);
+
+    // Display current limit
+    uint16_t currentLimit = bikeBus.getMotorCurrentLimit();
+    Serial.printf("Motor current limit: %dA\n", currentLimit);
+
+    // Set motor current limit
+    bikeBus.setMotorCurrentLimit(currentLimit);
+    delay(10);
+
+    // Set support level
     bikeBus.setSupportLevel(currentSupportLevel);
+
+    // Send motor control value to activate the motor
+    bikeBus.sendMotorControl();
+
     
     M5.Display.clear();
     M5.Display.setCursor(10, 10);
     M5.Display.println("BikeBus Display");
     M5.Display.println("Initialized");
-    
-    delay(10);
+    M5.Display.printf("Max Current: %dA", currentLimit);
 }
 
 // ============================================================================
@@ -189,10 +225,29 @@ void setup() {
 // ============================================================================
 
 void loop() {
-    M5.update();
     
     // Update BikeBus communication
     bikeBus.update();
+
+    M5.update();
+    
+    // Handle touch input for push assist
+    // Only activate when touching the upper half of the display (y < 120)
+    auto touch = M5.Touch.getDetail();
+    bool screenTouched = (touch.state != m5::touch_state_t::none);
+    bool touchInUpperHalf = screenTouched && (touch.y < 120);
+    
+    if (touchInUpperHalf && !pushAssistActive) {
+        // Touch detected in upper half - enable push assist
+        pushAssistActive = true;
+        bikeBus.setPushAssist(true);
+        Serial.printf("Push assist ON (touch at x=%d, y=%d)\n", touch.x, touch.y);
+    } else if (!touchInUpperHalf && pushAssistActive) {
+        // Touch released or moved to lower half - disable push assist
+        pushAssistActive = false;
+        bikeBus.setPushAssist(false);
+        Serial.println("Push assist OFF");
+    }
     
     // Handle button inputs
     if (M5.BtnA.wasPressed()) {
@@ -248,6 +303,7 @@ void loop() {
         float voltage = bikeBus.getBatteryVoltageV();
         float current = bikeBus.getBatteryCurrentA();
         float temp = bikeBus.getMotorTempC();
+        uint16_t motorCurrentLimit = bikeBus.getMotorCurrentLimit();
         
         // Initialize display on first run
         if (!displayInitialized) {
@@ -276,9 +332,10 @@ void loop() {
             prevSOC = soc;
         }
         
-        if (currentSupportLevel != prevLevel) {
-            updateLevelGauge(currentSupportLevel);
+        if (currentSupportLevel != prevLevel || pushAssistActive != prevPushAssist) {
+            updateLevelGauge(currentSupportLevel, pushAssistActive);
             prevLevel = currentSupportLevel;
+            prevPushAssist = pushAssistActive;
         }
         
         if (errorBits != prevErrorBits) {
@@ -288,11 +345,13 @@ void loop() {
         
         if (abs(voltage - prevVoltage) > 0.1 || 
             abs(current - prevCurrent) > 0.1 || 
-            abs(temp - prevTemp) > 1.0) {
-            updateBottomInfo(voltage, current, temp);
+            abs(temp - prevTemp) > 1.0 ||
+            motorCurrentLimit != prevMotorCurrentLimit) {
+            updateBottomInfo(voltage, current, temp, motorCurrentLimit);
             prevVoltage = voltage;
             prevCurrent = current;
             prevTemp = temp;
+            prevMotorCurrentLimit = motorCurrentLimit;
         }
     }
     

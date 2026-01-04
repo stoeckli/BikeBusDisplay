@@ -15,6 +15,7 @@ BikeBus::BikeBus(HardwareSerial* ser, uint16_t wheelCircumferenceMm)
       motorTemperature(0),
       motorErrorBits(0), 
       motorErrorCode(0),
+      motorCurrentLimit(0),
       batteryVoltage(0), 
       batteryCurrent(0), 
       batteryAvgCurrent(0),
@@ -163,6 +164,9 @@ void BikeBus::processResponse() {
             case MOTOR_TOKEN_ERROR_CODE:
                 motorErrorCode = value & 0xFF;
                 break;
+            case MOTOR_TOKEN_CURRENT_LIMIT_R:
+                motorCurrentLimit = value;
+                break;
         }
     } else if (currentAddress == BIKEBUS_ADDR_BATTERY1) {
         switch (currentToken) {
@@ -194,11 +198,38 @@ void BikeBus::processResponse() {
 // Initialize motor (set to Pedelec mode)
 void BikeBus::initializeMotor() {
     sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CONFIG_WORD_W, CONFIG_PEDELEC_MODE);
-    delay(20);
+    delay(5);
     if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
         processResponse();
     }
     motorConfigured = true;
+}
+
+// Query motor current limit (read immediately)
+void BikeBus::queryMotorCurrentLimit() {
+    sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CURRENT_LIMIT_R, 0x0000);
+    delay(5);
+    if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
+        processResponse();
+    }
+}
+
+// Set motor current limit (read immediately)
+void BikeBus::setMotorCurrentLimit(uint16_t currentA) {
+    sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CURRENT_LIMIT_W, currentA);
+    delay(5);
+    if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
+        processResponse();
+    }
+
+}
+// Send motor control telegram immediately
+void BikeBus::sendMotorControl() {
+    sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_MAIN_CONTROL, motorControlValue);
+    delay(5);
+    if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
+        processResponse();
+    }
 }
 
 // Set motor control value (support level, regeneration, or push assist)
@@ -225,7 +256,7 @@ void BikeBus::setPushAssist(bool enable) {
     if (enable) {
         // Switch to eBike mode first
         sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CONFIG_WORD_W, CONFIG_EBIKE_MODE);
-        delay(20);
+        delay(5);
         receiveTelegram(BIKEBUS_RX_TIMEOUT);
         
         motorControlValue = MMC_PUSH_ASSIST;
@@ -236,14 +267,14 @@ void BikeBus::setPushAssist(bool enable) {
         // Send neutral 8 times
         for (int i = 0; i < 8; i++) {
             sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_MAIN_CONTROL, MMC_NEUTRAL);
-            delay(20);
+            delay(5);
             receiveTelegram(BIKEBUS_RX_TIMEOUT);
-            delay(20);
+            delay(10);
         }
         
         // Switch back to Pedelec mode
         sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CONFIG_WORD_W, CONFIG_PEDELEC_MODE);
-        delay(20);
+        delay(5);
         receiveTelegram(BIKEBUS_RX_TIMEOUT);
     }
 }
@@ -251,7 +282,7 @@ void BikeBus::setPushAssist(bool enable) {
 // Set current limit (in Amperes)
 void BikeBus::setCurrentLimit(uint16_t currentA) {
     sendTelegram(BIKEBUS_ADDR_BATTERY1, BATTERY_TOKEN_CURRENT_LIMIT_R, currentA);
-    delay(20);
+    delay(5);
     receiveTelegram(BIKEBUS_RX_TIMEOUT);
 }
 
@@ -263,7 +294,6 @@ void BikeBus::setLight(uint8_t mode) {
 // Main update function - executes telegram sequence
 void BikeBus::update() {
     unsigned long currentTime = millis();
-    
     // Check if enough time has passed for next telegram
     bool shouldSend = false;
     if (waitingForResponse) {
@@ -296,7 +326,6 @@ void BikeBus::update() {
         case 21:
         case 23:
             sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_MAIN_CONTROL, motorControlValue);
-            lastMotorControlTime = currentTime;
             break;
         case 2: // Battery: Average time to empty
             sendTelegram(BIKEBUS_ADDR_BATTERY1, BATTERY_TOKEN_AVG_TIME_EMPTY, 0x0000);
@@ -372,6 +401,10 @@ uint16_t BikeBus::getMotorErrorBits() {
 
 uint8_t BikeBus::getMotorErrorCode() { 
     return motorErrorCode; 
+}
+
+uint16_t BikeBus::getMotorCurrentLimit() { 
+    return motorCurrentLimit; 
 }
 
 // Battery getters

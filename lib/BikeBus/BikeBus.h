@@ -132,6 +132,7 @@ private:
     uint16_t motorTemperature;    // in Kelvin
     uint16_t motorErrorBits;
     uint8_t motorErrorCode;
+    uint16_t motorCurrentLimit;   // in Amperes
     bool motorConfigured;
     
     // Battery state
@@ -168,6 +169,15 @@ public:
     // Initialize motor (set to Pedelec mode)
     void initializeMotor();
     
+    // Query motor current limit (read immediately)
+    void queryMotorCurrentLimit();
+
+    // Set motor current limit
+    void setMotorCurrentLimit(uint16_t currentA);
+
+    // Send motor control telegram immediately
+    void sendMotorControl();
+    
     // Set motor control value (support level, regeneration, or push assist)
     void setMotorControl(uint16_t value);
     
@@ -197,6 +207,7 @@ public:
     float getMotorTempC();                // Temperature in Celsius
     uint16_t getMotorErrorBits();         // Error bits
     uint8_t getMotorErrorCode();          // Error code
+    uint16_t getMotorCurrentLimit();      // Max current in Amperes
     
     // Battery getters
     uint16_t getBatteryVoltage();         // Voltage in mV
