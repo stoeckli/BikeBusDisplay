@@ -1,3 +1,43 @@
+/**
+ * @file BikeBus.h
+ * @brief BikeBus v1.8 Protocol Library - Header File
+ * 
+ * This header file defines the BikeBus class and protocol constants for communicating
+ * with BikeBus v1.8 compatible e-bike systems. The library provides a comprehensive
+ * interface for controlling motors, monitoring batteries, and managing lighting systems
+ * over a half-duplex UART connection.
+ * 
+ * Protocol Features:
+ * - Motor control (5 support levels, 3 regeneration levels, push assist)
+ * - Battery monitoring (voltage, current, SOC, temperature)
+ * - Light control (on/off, high beam, brake lights)
+ * - Automatic telegram sequencing with 20ms timing
+ * - Checksum validation for data integrity
+ * - Debug output for protocol analysis
+ * 
+ * @author Markus Stoeckli
+ * @email support@stoeckli.net
+ * @date January 5, 2026
+ * @version 1.0.0
+ * 
+ * @copyright Copyright (C) 2026 Markus Stoeckli
+ * 
+ * @license GNU General Public License v3.0
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #ifndef BIKEBUS_H
 #define BIKEBUS_H
 
@@ -122,6 +162,9 @@ private:
     bool debugEnabled;
     uint16_t wheelCircumference;
     
+    // Communication tracking
+    unsigned long lastSuccessfulRx;  // Last time we received a valid response
+    
     // Telegram sequence state
     int sequenceIndex;
     
@@ -171,6 +214,9 @@ public:
     
     // Query motor current limit (read immediately)
     void queryMotorCurrentLimit();
+    
+    // Query motor speed (read immediately)
+    void queryMotorSpeed();
 
     // Set motor current limit
     void setMotorCurrentLimit(uint16_t currentA);
@@ -198,6 +244,13 @@ public:
     
     // Main update function - executes telegram sequence
     void update();
+    
+    // Bus monitor function - listens to all bus traffic and reports to Serial
+    void busMonitor();
+    
+    // Communication status
+    unsigned long getLastSuccessfulRxTime();  // Get timestamp of last successful reception
+    bool isBusActive(unsigned long timeoutMs = 5000);  // Check if bus has been active recently
     
     // Motor getters
     int16_t getMotorSpeed();              // RPM (can be negative)

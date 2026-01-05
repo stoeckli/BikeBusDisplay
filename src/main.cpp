@@ -1,6 +1,56 @@
+/**
+ * @file main.cpp
+ * @brief Main application for BikeBus Display system
+ * 
+ * This file implements the main application logic for the BikeBus Display, a comprehensive
+ * e-bike display and control system for M5Stack Core2. It provides real-time monitoring
+ * of speed, battery status, motor parameters, and control functions including support
+ * levels, push assist, and lighting control.
+ * 
+ * Features:
+ * - Real-time speed, battery SOC, and motor parameter display
+ * - 5 support levels with visual feedback
+ * - Touch-activated push assist mode
+ * - Bus monitoring mode for protocol debugging
+ * - GPIO-controlled bus voltage for proper power management
+ * 
+ * @author Markus Stoeckli
+ * @email support@stoeckli.net
+ * @date January 5, 2026
+ * @version 1.0.0
+ * 
+ * @copyright Copyright (C) 2026 Markus Stoeckli
+ * 
+ * @license GNU General Public License v3.0
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <BikeBus.h>
+
+// ============================================================================
+// Pin Definitions
+// ============================================================================
+#define BUS_VOLTAGE_ENABLE_PIN 25    // GPIO for bus voltage control
+#define BUS_ENABLE_PIN  26  // GPIO for bus control
+
+// ============================================================================
+// Constants
+// ============================================================================
+#define AUTO_SHUTDOWN_TIMEOUT_MS  (10 * 60 * 1000)  // 10 minutes in milliseconds
 
 // ============================================================================
 // Global Variables
@@ -8,8 +58,10 @@
 
 BikeBus bikeBus(&Serial2, 2222);  // Use Serial2 for BikeBus communication, wheel circumference 2222mm
 unsigned long lastDisplayUpdate = 0;
+unsigned long lastActivityTime = 0;  // Track last activity for auto-shutdown
 uint8_t currentSupportLevel = 0;  // Default to level 0
 bool pushAssistActive = false;    // Track push assist state
+bool busMonitorMode = false;      // Track if bus monitor mode is active
 
 // Previous values for display update detection
 float prevSpeed = -1;
@@ -162,6 +214,33 @@ void updateErrorDisplay(uint16_t errorBits) {
     }
 }
 
+// Function to perform shutdown sequence
+void performShutdown(const char* reason) {
+    Serial.printf("\n*** AUTO SHUTDOWN: %s ***\n", reason);
+    
+    // Show shutdown message
+    M5.Display.fillScreen(BLACK);
+    M5.Display.setTextColor(ORANGE);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(30, 80);
+    M5.Display.println("AUTO SHUTDOWN");
+    M5.Display.setTextColor(WHITE);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(30, 110);
+    M5.Display.println(reason);
+    delay(2000);
+    
+    // Disable bus control
+    digitalWrite(BUS_ENABLE_PIN, LOW);
+    
+    // Disable bus voltage before shutdown
+    digitalWrite(BUS_VOLTAGE_ENABLE_PIN, LOW);
+    delay(100);  // Allow bus to settle
+    
+    // Power off the device
+    M5.Power.powerOff();
+}
+
 // ============================================================================
 // Setup
 // ============================================================================
@@ -169,6 +248,12 @@ void updateErrorDisplay(uint16_t errorBits) {
 void setup() {
     auto cfg = M5.config();
     M5.begin(cfg);
+    
+    // Check if Button A is pressed during boot to enter bus monitor mode
+    M5.update();
+    if (M5.BtnA.isPressed()) {
+        busMonitorMode = true;
+    }
     
     // Initialize USB Serial for debug output
     Serial.begin(115200);
@@ -181,22 +266,54 @@ void setup() {
     // Initialize BikeBus on Serial2
     // Pin configuration for M5Stack Core2: RX=13, TX=14
     bikeBus.begin(9600);
+    
+    // Initialize GPIO for bus voltage control
+    // HIGH = Enable bus voltage for communication
+    // LOW = Disable bus voltage for shutdown
+    pinMode(BUS_VOLTAGE_ENABLE_PIN, OUTPUT);
+    digitalWrite(BUS_VOLTAGE_ENABLE_PIN, HIGH);
+
+    // Initialize GPIO for Bus Control
+    pinMode(BUS_ENABLE_PIN, OUTPUT);
+    digitalWrite(BUS_ENABLE_PIN, HIGH);
+
+    if (busMonitorMode) {
+        // Bus Monitor Mode
+        Serial.println("\n*** BUS MONITOR MODE ACTIVATED ***");
+        Serial.println("Listening to all BikeBus traffic...\n");
+        Serial.println("Format: [Timestamp] ADDR:xxx (Device) TOKEN:xxx VALUE:0xXXXX (decimal) RAW:[hex bytes] CHECKSUM:status\n");
+        
+        M5.Display.clear();
+        M5.Display.setCursor(10, 10);
+        M5.Display.setTextColor(YELLOW);
+        M5.Display.println("BUS MONITOR");
+        M5.Display.println("MODE");
+        M5.Display.setTextColor(WHITE);
+        M5.Display.setTextSize(1);
+        M5.Display.println();
+        M5.Display.println("Listening to");
+        M5.Display.println("all bus traffic");
+        M5.Display.println();
+        M5.Display.println("See Serial output");
+        M5.Display.println("for details");
+        
+        return; // Skip normal initialization
+    }
+    
+    // Normal mode continues here
     bikeBus.setDebug(true);  // Enable debug output
     
-    // Initialize GPIO 26 for device power/enable
-    pinMode(26, OUTPUT);
-    digitalWrite(26, HIGH);
-
     // Small delay for bus stabilization
     delay(10);
     
+    // Query motor current limit
+    bikeBus.queryMotorCurrentLimit();
+    delay(10);
+
     // Initialize motor
     bikeBus.initializeMotor();
     delay(10);
 
-    // Query motor current limit
-    bikeBus.queryMotorCurrentLimit();
-    delay(10);
 
     // Display current limit
     uint16_t currentLimit = bikeBus.getMotorCurrentLimit();
@@ -206,12 +323,18 @@ void setup() {
     bikeBus.setMotorCurrentLimit(currentLimit);
     delay(10);
 
+    // query actual motor speed
+    bikeBus.queryMotorSpeed();
+    delay(10);
+
     // Set support level
     bikeBus.setSupportLevel(currentSupportLevel);
 
     // Send motor control value to activate the motor
     bikeBus.sendMotorControl();
 
+    // Initialize activity timer
+    lastActivityTime = millis();
     
     M5.Display.clear();
     M5.Display.setCursor(10, 10);
@@ -225,11 +348,45 @@ void setup() {
 // ============================================================================
 
 void loop() {
+    M5.update();
     
+    // Check if in bus monitor mode
+    if (busMonitorMode) {
+        // Bus monitor mode - just listen and report
+        bikeBus.busMonitor();
+        
+        // Check if user wants to exit (hold button A for 3 seconds)
+        if (M5.BtnA.pressedFor(3000)) {
+            Serial.println("\n*** Exiting Bus Monitor Mode - Rebooting ***\n");
+            M5.Display.clear();
+            M5.Display.setCursor(10, 100);
+            M5.Display.println("Rebooting...");
+            delay(1000);
+            ESP.restart();
+        }
+        return; // Don't execute normal loop code
+    }
+    
+    // Normal mode continues here
     // Update BikeBus communication
     bikeBus.update();
-
-    M5.update();
+    
+    // Check for activity (bus communication or movement)
+    float currentSpeed = bikeBus.getSpeedKmh();
+    bool busActive = bikeBus.isBusActive(5000);  // Check if bus responded in last 5 seconds
+    bool hasMovement = (currentSpeed > 0.5);  // Speed threshold to detect movement
+    
+    if (busActive || hasMovement) {
+        // Update activity timestamp if there's bus communication or movement
+        lastActivityTime = millis();
+    }
+    
+    // Check for auto-shutdown timeout (10 minutes of inactivity)
+    if (millis() - lastActivityTime > AUTO_SHUTDOWN_TIMEOUT_MS) {
+        if (!busActive && !hasMovement) {
+            performShutdown("Inactivity timeout");
+        }
+    }
     
     // Handle touch input for push assist
     // Only activate when touching the upper half of the display (y < 120)
@@ -274,6 +431,13 @@ void loop() {
         M5.Display.setCursor(60, 100);
         M5.Display.println("POWERING OFF...");
         delay(1000);
+        
+        // Disable bus control
+        digitalWrite(BUS_ENABLE_PIN, LOW);
+
+        // Disable bus voltage before shutdown
+        digitalWrite(BUS_VOLTAGE_ENABLE_PIN, LOW);
+        delay(100);  // Allow bus to settle
         
         // Power off the device
         M5.Power.powerOff();

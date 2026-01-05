@@ -1,3 +1,44 @@
+/**
+ * @file BikeBus.cpp
+ * @brief BikeBus v1.8 Protocol Library - Implementation
+ * 
+ * This file implements the BikeBus class methods for communicating with BikeBus v1.8
+ * compatible e-bike systems. It handles telegram construction, transmission, reception,
+ * checksum validation, and automatic sequencing of queries to motor, battery, and
+ * light controllers.
+ * 
+ * Key Implementation Features:
+ * - Half-duplex UART communication with echo cancellation
+ * - Automatic 20ms telegram timing
+ * - Cyclic querying of motor speed, battery SOC, and error status
+ * - Motor control telegram transmission
+ * - Response processing and data extraction
+ * - Bus monitoring mode for debugging
+ * - Configurable wheel circumference for speed calculation
+ * 
+ * @author Markus Stoeckli
+ * @email support@stoeckli.net
+ * @date January 5, 2026
+ * @version 1.0.0
+ * 
+ * @copyright Copyright (C) 2026 Markus Stoeckli
+ * 
+ * @license GNU General Public License v3.0
+ * 
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 #include "BikeBus.h"
 
 // ============================================================================
@@ -28,6 +69,7 @@ BikeBus::BikeBus(HardwareSerial* ser, uint16_t wheelCircumferenceMm)
       wheelCircumference(wheelCircumferenceMm) {
     lastTxTime = 0;
     lastMotorControlTime = 0;
+    lastSuccessfulRx = 0;
 }
 
 void BikeBus::begin(unsigned long baud) {
@@ -110,6 +152,7 @@ bool BikeBus::receiveTelegram(unsigned long timeout) {
                 uint8_t expectedChecksum = calculateChecksum(rxBuffer);
                 if (rxBuffer[4] == expectedChecksum) {
                     waitingForResponse = false;
+                    lastSuccessfulRx = millis();  // Track successful reception
                     return true;
                 }
                 
@@ -208,6 +251,15 @@ void BikeBus::initializeMotor() {
 // Query motor current limit (read immediately)
 void BikeBus::queryMotorCurrentLimit() {
     sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_CURRENT_LIMIT_R, 0x0000);
+    delay(5);
+    if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
+        processResponse();
+    }
+}
+
+// Query motor speed (read immediately)
+void BikeBus::queryMotorSpeed() {
+    sendTelegram(BIKEBUS_ADDR_MOTOR, MOTOR_TOKEN_SPEED, 0x0000);
     delay(5);
     if (receiveTelegram(BIKEBUS_RX_TIMEOUT)) {
         processResponse();
@@ -374,6 +426,147 @@ void BikeBus::update() {
     }
 }
 
+// Bus monitor function - listens to all bus traffic and reports to Serial
+void BikeBus::busMonitor() {
+    static unsigned long lastByteTime = 0;
+    static uint8_t buffer[5];
+    static int bufferIndex = 0;
+    static bool synced = false;
+    
+    unsigned long currentTime = millis();
+    
+    // Check if data is available
+    while (serial->available()) {
+        uint8_t byte = serial->read();
+        unsigned long byteTime = millis();
+        
+        // Check for break (5ms or more since last byte) - new telegram starts
+        if (synced && (byteTime - lastByteTime) >= 5) {
+            // Process previous telegram if we had one
+            if (bufferIndex == 5) {
+                // Verify checksum
+                uint8_t calculatedChecksum = buffer[0] + buffer[1] + buffer[2] + buffer[3];
+                bool checksumValid = (calculatedChecksum == buffer[4]);
+                
+                // Print telegram info
+                Serial.printf("[%10lu] ", lastByteTime);
+                
+                // Print address (with device name if known)
+                Serial.printf("ADDR:%3d ", buffer[0]);
+                switch(buffer[0]) {
+                    case BIKEBUS_ADDR_MASTER:       Serial.print("(MASTER)      "); break;
+                    case BIKEBUS_ADDR_DISPLAY_SLAVE: Serial.print("(DISPLAY)     "); break;
+                    case BIKEBUS_ADDR_MOTOR:        Serial.print("(MOTOR)       "); break;
+                    case BIKEBUS_ADDR_BRAKE:        Serial.print("(BRAKE)       "); break;
+                    case BIKEBUS_ADDR_BATTERY1:     Serial.print("(BATTERY1)    "); break;
+                    case BIKEBUS_ADDR_BATTERY2:     Serial.print("(BATTERY2)    "); break;
+                    case BIKEBUS_ADDR_LIGHT:        Serial.print("(LIGHT)       "); break;
+                    case BIKEBUS_ADDR_SERVICE_TOOL: Serial.print("(SERVICE)     "); break;
+                    default:                        Serial.print("(UNKNOWN)     "); break;
+                }
+                
+                // Print token
+                Serial.printf("TOKEN:%3d ", buffer[1]);
+                
+                // Print value (combine low and high byte)
+                uint16_t value = buffer[2] | (buffer[3] << 8);
+                Serial.printf("VALUE:0x%04X (%5d) ", value, value);
+                
+                // Print raw bytes
+                Serial.printf("RAW:[%02X %02X %02X %02X %02X] ", 
+                             buffer[0], buffer[1], buffer[2], buffer[3], buffer[4]);
+                
+                // Print checksum status
+                if (checksumValid) {
+                    Serial.print("CHECKSUM:OK");
+                } else {
+                    Serial.printf("CHECKSUM:FAIL (exp:%02X got:%02X)", calculatedChecksum, buffer[4]);
+                }
+                
+                Serial.println();
+            } else if (bufferIndex > 0) {
+                // Incomplete telegram
+                Serial.printf("[%10lu] INCOMPLETE: %d bytes: ", lastByteTime, bufferIndex);
+                for (int i = 0; i < bufferIndex; i++) {
+                    Serial.printf("%02X ", buffer[i]);
+                }
+                Serial.println();
+            }
+            
+            // Reset buffer for new telegram
+            bufferIndex = 0;
+        }
+        
+        // Store byte in buffer
+        if (bufferIndex < 5) {
+            buffer[bufferIndex] = byte;
+            bufferIndex++;
+            lastByteTime = byteTime;
+            synced = true;
+            
+            // If we have a complete telegram, process it after a small delay
+            // to catch the case where this is the last byte
+            if (bufferIndex == 5) {
+                delay(1); // Small delay to ensure we catch the break
+            }
+        } else {
+            // Buffer overflow - shouldn't happen with proper sync
+            Serial.printf("[%10lu] BUFFER OVERFLOW - resetting\n", byteTime);
+            bufferIndex = 0;
+            buffer[0] = byte;
+            bufferIndex = 1;
+            lastByteTime = byteTime;
+        }
+    }
+    
+    // Check if we have a complete telegram waiting (at end of data stream)
+    if (synced && bufferIndex == 5 && (currentTime - lastByteTime) >= 5) {
+        // Verify checksum
+        uint8_t calculatedChecksum = buffer[0] + buffer[1] + buffer[2] + buffer[3];
+        bool checksumValid = (calculatedChecksum == buffer[4]);
+        
+        // Print telegram info
+        Serial.printf("[%10lu] ", lastByteTime);
+        
+        // Print address (with device name if known)
+        Serial.printf("ADDR:%3d ", buffer[0]);
+        switch(buffer[0]) {
+            case BIKEBUS_ADDR_MASTER:       Serial.print("(MASTER)      "); break;
+            case BIKEBUS_ADDR_DISPLAY_SLAVE: Serial.print("(DISPLAY)     "); break;
+            case BIKEBUS_ADDR_MOTOR:        Serial.print("(MOTOR)       "); break;
+            case BIKEBUS_ADDR_BRAKE:        Serial.print("(BRAKE)       "); break;
+            case BIKEBUS_ADDR_BATTERY1:     Serial.print("(BATTERY1)    "); break;
+            case BIKEBUS_ADDR_BATTERY2:     Serial.print("(BATTERY2)    "); break;
+            case BIKEBUS_ADDR_LIGHT:        Serial.print("(LIGHT)       "); break;
+            case BIKEBUS_ADDR_SERVICE_TOOL: Serial.print("(SERVICE)     "); break;
+            default:                        Serial.print("(UNKNOWN)     "); break;
+        }
+        
+        // Print token
+        Serial.printf("TOKEN:%3d ", buffer[1]);
+        
+        // Print value (combine low and high byte)
+        uint16_t value = buffer[2] | (buffer[3] << 8);
+        Serial.printf("VALUE:0x%04X (%5d) ", value, value);
+        
+        // Print raw bytes
+        Serial.printf("RAW:[%02X %02X %02X %02X %02X] ", 
+                     buffer[0], buffer[1], buffer[2], buffer[3], buffer[4]);
+        
+        // Print checksum status
+        if (checksumValid) {
+            Serial.print("CHECKSUM:OK");
+        } else {
+            Serial.printf("CHECKSUM:FAIL (exp:%02X got:%02X)", calculatedChecksum, buffer[4]);
+        }
+        
+        Serial.println();
+        
+        // Reset for next telegram
+        bufferIndex = 0;
+    }
+}
+
 // Motor getters
 int16_t BikeBus::getMotorSpeed() { 
     return motorSpeed; 
@@ -443,3 +636,16 @@ uint16_t BikeBus::getBatteryStatus() {
 uint16_t BikeBus::getBatteryTimeToEmpty() { 
     return batteryTimeToEmpty; 
 }
+
+// Communication status getters
+unsigned long BikeBus::getLastSuccessfulRxTime() {
+    return lastSuccessfulRx;
+}
+
+bool BikeBus::isBusActive(unsigned long timeoutMs) {
+    if (lastSuccessfulRx == 0) {
+        return false;  // Never received anything
+    }
+    return (millis() - lastSuccessfulRx) < timeoutMs;
+}
+

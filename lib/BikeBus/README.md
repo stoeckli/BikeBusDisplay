@@ -481,6 +481,38 @@ uint16_t timeLeft = bikeBus.getBatteryTimeToEmpty();
 Serial.printf("Time remaining: %d minutes\n", timeLeft);
 ```
 
+#### Communication Status
+
+##### `unsigned long getLastSuccessfulRxTime()`
+
+Returns the timestamp (in milliseconds) of the last successful telegram reception.
+
+**Returns:** Timestamp in milliseconds (from `millis()`)
+
+**Example:**
+```cpp
+unsigned long lastRx = bikeBus.getLastSuccessfulRxTime();
+Serial.printf("Last RX: %lu ms ago\n", millis() - lastRx);
+```
+
+##### `bool isBusActive(unsigned long timeoutMs = 5000)`
+
+Checks if the bus has been active (received responses) within the specified timeout period.
+
+**Parameters:**
+- `timeoutMs`: Timeout in milliseconds (default: 5000ms / 5 seconds)
+
+**Returns:** `true` if bus responded within timeout, `false` otherwise
+
+**Example:**
+```cpp
+if (bikeBus.isBusActive(10000)) {
+    Serial.println("Bus is active");
+} else {
+    Serial.println("Bus timeout - no response");
+}
+```
+
 ### Main Loop
 
 #### `void update()`
@@ -749,18 +781,31 @@ RX: 01 14 2C 00 41
 
 This library is based on the BikeBus v1.8 specification.
 
-MIT License
+## License
 
-Copyright (c) 2026 BikeBusDisplay Project
+GNU General Public License v3.0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+```
+BikeBus Library - Arduino library for BikeBus v1.8 protocol communication
+Copyright (C) 2026 Markus Stoeckli <support@stoeckli.net>
 
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
 
 ---
 
-**Created for the BikeBusDisplay project**  
+**Author**: Markus Stoeckli <support@stoeckli.net>  
 **Repository**: https://github.com/stoeckli/BikeBusDisplay  
-**Version**: 1.0.0
+**Version**: 1.0.0  
+**Last Updated**: January 5, 2026
