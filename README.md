@@ -39,9 +39,10 @@ BikeBus Display is a feature-rich display and control interface for e-bikes usin
 
 ### Required Hardware
 - M5Stack Core2
-- BikeBus-compatible e-bike system
-- RS485 or half-duplex UART transceiver (if needed)
-- Power supply (typically from e-bike battery)
+- M5Stack Proto Module
+- LIN interface (e.g. TLIN2029A)
+- Step-down voltage regulator which can hanlde 50 V (e.g. Pololu D36V6F5)
+- cirquit to enable bus power (e.g. NPN and P-FET)
 
 ### Pin Configuration
 - **Serial2 RX**: GPIO 13
@@ -50,7 +51,8 @@ BikeBus Display is a feature-rich display and control interface for e-bikes usin
 - **Bus Enable**: GPIO 26
 
 ### Wiring
-Connect the M5Stack Core2 to the BikeBus using a half-duplex UART connection. Ensure proper voltage levels and isolation as needed.
+Connect the M5Stack Core2 to the Proto Module
+Implement the volage regulator, level coverter and LIN interface on the Proto Module
 
 ## Software Setup
 
@@ -102,7 +104,7 @@ pio run --target upload
 
 ### Bus Monitor Mode
 
-Hold Button A during boot to enter bus monitoring mode. This mode displays all BikeBus traffic on the serial console for debugging purposes. Hold Button A for 3 seconds to exit and reboot.
+Hold Button A during boot to enter bus monitoring mode. This mode displays all BikeBus traffic on the serial console for debugging purposes. Hold Button A for 3 seconds to exit and reboot. You might have to manually interrupt the BUS pull-up when another controller is being monitored.
 
 ### Auto-Shutdown Feature
 
@@ -156,9 +158,6 @@ BikeBusDisplay/
 │       └── README.md         # Library documentation
 ├── include/                  # Project headers (if any)
 ├── test/                     # Unit tests (if any)
-├── info/                     # Protocol documentation
-│   ├── BikeBus-v1.8.pdf     # BikeBus protocol specification
-│   └── BikeBus-v1.8-text.txt
 ├── platformio.ini            # PlatformIO configuration
 └── README.md                 # This file
 ```
@@ -234,7 +233,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 ## References
 
-- [BikeBus Protocol v1.8 Specification](info/BikeBus-v1.8.pdf)
+- [BikeBus Protocol v1.8 Specification](https://github.com/stoeckli/Bikebus_Battery/blob/main/BikeBus-v1.8.pdf)
 - [M5Stack Core2 Documentation](https://docs.m5stack.com/en/core/core2)
 - [PlatformIO Documentation](https://docs.platformio.org/)
 
