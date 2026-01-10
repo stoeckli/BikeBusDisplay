@@ -50,7 +50,7 @@
 // ============================================================================
 // Constants
 // ============================================================================
-#define AUTO_SHUTDOWN_TIMEOUT_MS  (10 * 60 * 1000)  // 10 minutes in milliseconds
+#define AUTO_SHUTDOWN_TIMEOUT_MS (10 * 60 * 1000)  // 10 minutes in milliseconds
 
 // ============================================================================
 // Global Variables
@@ -376,14 +376,14 @@ void loop() {
     bool busActive = bikeBus.isBusActive(5000);  // Check if bus responded in last 5 seconds
     bool hasMovement = (currentSpeed > 0.5);  // Speed threshold to detect movement
     
-    if (busActive || hasMovement) {
+    if (busActive && hasMovement) {
         // Update activity timestamp if there's bus communication or movement
         lastActivityTime = millis();
     }
     
     // Check for auto-shutdown timeout (10 minutes of inactivity)
     if (millis() - lastActivityTime > AUTO_SHUTDOWN_TIMEOUT_MS) {
-        if (!busActive && !hasMovement) {
+        if (!busActive || !hasMovement) {
             performShutdown("Inactivity timeout");
         }
     }
